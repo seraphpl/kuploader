@@ -5,8 +5,13 @@ api_version: 1
 threadsafe: true
 
 handlers:
+- url: /stylesheets
+  static_dir: stylesheets
+
 - url: /.*
   script: kuploader.application
+  secure: always
+  login: required
 
 libraries:
 - name: webapp2
