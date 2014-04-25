@@ -1,5 +1,6 @@
 import os
 import urllib
+import jinja2
 import webapp2
 
 from google.appengine.api import users
@@ -7,6 +8,11 @@ from google.appengine.ext import ndb
 from google.appengine.ext import blobstore
 from google.appengine.ext.webapp import blobstore_handlers
 
+
+JINJA_ENVIRONMENT = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
+    extensions=['jinja2.ext.autoescape'],
+    autoescape=True)
 
 class UserFile(ndb.Model):
     user = ndb.StringProperty()
@@ -20,22 +26,21 @@ class MainHandler(webapp2.RequestHandler):
             UserFile.user == users.get_current_user().user_id()
         ).fetch()
         upload_url = blobstore.create_upload_url('/upload')
-        self.response.out.write('<html><body>')
-        self.response.out.write('%s<br><a href="%s">Logout</a><br>' %
-                                (users.get_current_user().nickname(),
-                                users.create_logout_url(self.request.uri)))
-        self.response.out.write('<form action="%s" method="POST" enctype="multipart/form-data">' % upload_url)
-        self.response.out.write("""Upload File: <input type="file" name="file"><br> <input type="submit"
-            name="submit" value="Submit"> </form>""")
-        for file in files:
-            self.response.write('<a href="%s">%s</a><br>' % 
-                                ('/serve/%s' % file.blob_key, file.file_name))
-        self.response.out.write('</body></html>')
+        logout_url = users.create_logout_url(self.request.uri)
+        template_values = {
+                'files': files,
+                'upload_url': upload_url,
+                'logout_url': logout_url,
+        }
+
+        template = JINJA_ENVIRONMENT.get_template('index.html')
+        self.response.write(template.render(template_values))
 
 
 class UploadHandler(blobstore_handlers.BlobstoreUploadHandler):
     def post(self):
-        upload_files = self.get_uploads('file')  # 'file' is file upload field in the form
+        # 'file' is file upload field in the form
+        upload_files = self.get_uploads('file')
         blob_info = upload_files[0]
         user_file = UserFile(user=users.get_current_user().user_id(),
                              file_name=blob_info.filename,
@@ -55,4 +60,3 @@ application = webapp2.WSGIApplication([
     ('/', MainHandler),
     ('/upload', UploadHandler),
     ('/serve/([^/]+)?', ServeHandler)], debug=True)
-
