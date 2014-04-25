@@ -6,4 +6,8 @@ threadsafe: true
 
 handlers:
 - url: /.*
-  script: kuploader.app
+  script: kuploader.application
+
+libraries:
+- name: webapp2
+  version: latest
