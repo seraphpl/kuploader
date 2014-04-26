@@ -4,11 +4,11 @@
 
   <div class='row'>
   {% for file in files  %}
-      <div class='col-md-8'>
+      <div class='col-xs-8'>
         <a href='/remove/{{ file.key.id() }}'><span class="glyphicon glyphicon-remove"></span></a>
         <a href="/serve/{{ file.blob_key }}">{{ file.file_name }}</a>
       </div>
-      <div class='col-md-4'>
+      <div class='col-xs-4'>
         <span>{{ file.user.nickname() }}</span><br>
       </div>
   {% endfor %}
