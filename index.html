@@ -1,0 +1,19 @@
+{% extends "main.html" %}
+
+{% block maincontent %}
+  <form role='form' action="{{ upload_url }}" method="post" enctype="multipart/form-data">
+    <div class="form-group">
+      <label for='file'>Upload File:</label>
+      <input type="file" id='file' name='file'>
+    </div>
+    <button type="submit" class='btn btn-default' name="submit">Submit</button>
+  </form>
+
+  <hr>
+
+  {% for file in files  %}
+    <a href='/remove/{{ file.key.id() }}'><span class="glyphicon glyphicon-remove"></span></a>
+    <a href="/serve/{{ file.blob_key }}">{{ file.file_name }}</a><br>
+  {% endfor %}
+
+{% endblock %}

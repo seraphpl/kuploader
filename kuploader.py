@@ -1,112 +1,93 @@
-import cgi
+import os
 import urllib
+import jinja2
+import webapp2
 
 from google.appengine.api import users
 from google.appengine.ext import ndb
-
-import webapp2
-
-
-MAIN_PAGE_FOOTER_TEMPLATE = """\
-    <form action="/sign?%s" method="post">
-      <div><textarea name="content" rows="3" cols="60"></textarea></div>
-      <div><input type="submit" value="Sign Guestbook"></div>
-    </form>
-
-    <hr>
-
-    <form>Guestbook name:
-      <input value="%s" name="guestbook_name">
-      <input type="submit" value="switch">
-    </form>
-
-    <a href="%s">%s</a>
-
-  </body>
-</html>
-"""
-
-DEFAULT_GUESTBOOK_NAME = 'default_guestbook'
+from google.appengine.ext import blobstore
+from google.appengine.ext.webapp import blobstore_handlers
 
 
-# We set a parent key on the 'Greetings' to ensure that they are all in the same
-# entity group. Queries across the single entity group will be consistent.
-# However, the write rate should be limited to ~1/second.
+JINJA_ENVIRONMENT = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
+    extensions=['jinja2.ext.autoescape'],
+    autoescape=True)
 
-def guestbook_key(guestbook_name=DEFAULT_GUESTBOOK_NAME):
-    """Constructs a Datastore key for a Guestbook entity with guestbook_name."""
-    return ndb.Key('Guestbook', guestbook_name)
-
-
-class Greeting(ndb.Model):
-    """Models an individual Guestbook entry with author, content, and date."""
-    author = ndb.UserProperty()
-    content = ndb.StringProperty(indexed=False)
-    date = ndb.DateTimeProperty(auto_now_add=True)
+class FileModel(ndb.Model):
+    user = ndb.UserProperty()
+    file_name = ndb.StringProperty()
+    blob_key = ndb.BlobKeyProperty()
 
 
-class MainPage(webapp2.RequestHandler):
-
+class MainHandler(webapp2.RequestHandler):
     def get(self):
-        self.response.write('<html><body>')
-        guestbook_name = self.request.get('guestbook_name',
-                                          DEFAULT_GUESTBOOK_NAME)
+        files = FileModel.query(
+            FileModel.user == users.get_current_user()
+        ).fetch()
+        upload_url = blobstore.create_upload_url('/upload')
+        logout_url = users.create_logout_url('/')
+        template_values = {
+                'files': files,
+                'upload_url': upload_url,
+                'logout_url': logout_url,
+                'user': users.get_current_user(),
+                'admin': users.is_current_user_admin()
+        }
 
-        # Ancestor Queries, as shown here, are strongly consistent with the High
-        # Replication Datastore. Queries that span entity groups are eventually
-        # consistent. If we omitted the ancestor from this query there would be
-        # a slight chance that Greeting that had just been written would not
-        # show up in a query.
-        greetings_query = Greeting.query(
-            ancestor=guestbook_key(guestbook_name)).order(-Greeting.date)
-        greetings = greetings_query.fetch(10)
-
-        for greeting in greetings:
-            if greeting.author:
-                self.response.write(
-                        '<b>%s</b> wrote:' % greeting.author.nickname())
-            else:
-                self.response.write('An anonymous person wrote:')
-            self.response.write('<blockquote>%s</blockquote>' %
-                                cgi.escape(greeting.content))
-
-        if users.get_current_user():
-            url = users.create_logout_url(self.request.uri)
-            url_linktext = 'Logout'
-        else:
-            url = users.create_login_url(self.request.uri)
-            url_linktext = 'Login'
-
-        # Write the submission form and the footer of the page
-        sign_query_params = urllib.urlencode({'guestbook_name': guestbook_name})
-        self.response.write(MAIN_PAGE_FOOTER_TEMPLATE %
-                            (sign_query_params, cgi.escape(guestbook_name),
-                             url, url_linktext))
+        template = JINJA_ENVIRONMENT.get_template('index.html')
+        self.response.write(template.render(template_values))
 
 
-class Guestbook(webapp2.RequestHandler):
-
+class UploadHandler(blobstore_handlers.BlobstoreUploadHandler):
     def post(self):
-        # We set the same parent key on the 'Greeting' to ensure each Greeting
-        # is in the same entity group. Queries across the single entity group
-        # will be consistent. However, the write rate to a single entity group
-        # should be limited to ~1/second.
-        guestbook_name = self.request.get('guestbook_name',
-                                          DEFAULT_GUESTBOOK_NAME)
-        greeting = Greeting(parent=guestbook_key(guestbook_name))
+        # 'file' is file upload field in the form
+        upload_files = self.get_uploads('file')
+        if len(upload_files) <= 0:
+            self.redirect('/')
+            return
+        blob_info = upload_files[0]
+        user_file = FileModel(user=users.get_current_user(),
+                             file_name=blob_info.filename,
+                             blob_key=blob_info.key())
+        user_file.put()
+        self.redirect('/')
 
-        if users.get_current_user():
-            greeting.author = users.get_current_user()
 
-        greeting.content = self.request.get('content')
-        greeting.put()
+class ServeHandler(blobstore_handlers.BlobstoreDownloadHandler):
+    def get(self, resource):
+        resource = str(urllib.unquote(resource))
+        blob_info = blobstore.BlobInfo.get(resource)
+        self.send_blob(blob_info, save_as=True)
 
-        query_params = {'guestbook_name': guestbook_name}
-        self.redirect('/?' + urllib.urlencode(query_params))
 
+class RemoveHandler(webapp2.RequestHandler):
+    def get(self, file_id):
+        file = FileModel.get_by_id(int(file_id))
+        if file:
+            file.key.delete()
+        self.redirect(self.request.referer)
+
+
+class AdminHandler(webapp2.RequestHandler):
+    def get(self):
+        files = FileModel.query().order(FileModel.user).fetch()
+        logout_url = users.create_logout_url(self.request.uri)
+        template_values = {
+                'files': files,
+                'logout_url': logout_url,
+                'user': users.get_current_user(),
+                'admin': users.is_current_user_admin()
+        }
+
+        template = JINJA_ENVIRONMENT.get_template('admin.html')
+        self.response.write(template.render(template_values))
+    
 
 application = webapp2.WSGIApplication([
-    ('/', MainPage),
-    ('/sign', Guestbook),
+    ('/', MainHandler),
+    ('/upload', UploadHandler),
+    ('/admin', AdminHandler),
+    ('/serve/([^/]+)?', ServeHandler),
+    ('/remove/([^/]+)?', RemoveHandler),
 ], debug=True)
-
