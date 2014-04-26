@@ -14,23 +14,25 @@ JINJA_ENVIRONMENT = jinja2.Environment(
     extensions=['jinja2.ext.autoescape'],
     autoescape=True)
 
-class UserFile(ndb.Model):
-    user = ndb.StringProperty()
+class FileModel(ndb.Model):
+    user = ndb.UserProperty()
     file_name = ndb.StringProperty()
     blob_key = ndb.BlobKeyProperty()
 
 
 class MainHandler(webapp2.RequestHandler):
     def get(self):
-        files = UserFile.query(
-            UserFile.user == users.get_current_user().user_id()
+        files = FileModel.query(
+            FileModel.user == users.get_current_user()
         ).fetch()
         upload_url = blobstore.create_upload_url('/upload')
-        logout_url = users.create_logout_url(self.request.uri)
+        logout_url = users.create_logout_url('/')
         template_values = {
                 'files': files,
                 'upload_url': upload_url,
                 'logout_url': logout_url,
+                'user': users.get_current_user(),
+                'admin': users.is_current_user_admin()
         }
 
         template = JINJA_ENVIRONMENT.get_template('index.html')
@@ -41,8 +43,11 @@ class UploadHandler(blobstore_handlers.BlobstoreUploadHandler):
     def post(self):
         # 'file' is file upload field in the form
         upload_files = self.get_uploads('file')
+        if len(upload_files) <= 0:
+            self.redirect('/')
+            return
         blob_info = upload_files[0]
-        user_file = UserFile(user=users.get_current_user().user_id(),
+        user_file = FileModel(user=users.get_current_user(),
                              file_name=blob_info.filename,
                              blob_key=blob_info.key())
         user_file.put()
@@ -56,7 +61,33 @@ class ServeHandler(blobstore_handlers.BlobstoreDownloadHandler):
         self.send_blob(blob_info, save_as=True)
 
 
+class RemoveHandler(webapp2.RequestHandler):
+    def get(self, file_id):
+        file = FileModel.get_by_id(int(file_id))
+        if file:
+            file.key.delete()
+        self.redirect(self.request.referer)
+
+
+class AdminHandler(webapp2.RequestHandler):
+    def get(self):
+        files = FileModel.query().order(FileModel.user).fetch()
+        logout_url = users.create_logout_url(self.request.uri)
+        template_values = {
+                'files': files,
+                'logout_url': logout_url,
+                'user': users.get_current_user(),
+                'admin': users.is_current_user_admin()
+        }
+
+        template = JINJA_ENVIRONMENT.get_template('admin.html')
+        self.response.write(template.render(template_values))
+    
+
 application = webapp2.WSGIApplication([
     ('/', MainHandler),
     ('/upload', UploadHandler),
-    ('/serve/([^/]+)?', ServeHandler)], debug=True)
+    ('/admin', AdminHandler),
+    ('/serve/([^/]+)?', ServeHandler),
+    ('/remove/([^/]+)?', RemoveHandler),
+], debug=True)
